@@ -1,0 +1,434 @@
+name: RDP
+on:
+  workflow_dispatch:
+jobs:
+  secure-rdp:
+    runs-on: windows-2025
+    timeout-minutes: 3600
+    steps:
+      - name: Ownership Verification
+        run: Write-Host "ToolboxLap.xyz - RDP Workflow Ready"
+
+      - name: Create Directories
+        run: |
+          New-Item -Path "D:\link subscribe youtube channel" -ItemType Directory -Force
+          New-Item -Path "D:\Script" -ItemType Directory -Force
+          Write-Host "Directories created"
+
+      - name: Configure RDP Settings
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service -Name TermService -Force
+
+      - name: Create RDP User
+        run: |
+          $password = "admin@123"
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          if (-not (Get-LocalUser -Name "TOOLBOXLAP" -ErrorAction SilentlyContinue)) {
+              New-LocalUser -Name "TOOLBOXLAP" -Password $securePass -AccountNeverExpires
+          }
+          Add-LocalGroupMember -Group "Administrators" -Member "TOOLBOXLAP" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "TOOLBOXLAP" -ErrorAction SilentlyContinue
+
+      - name: Install gdown for Google Drive Downloads
+        run: |
+          Write-Host "Installing gdown for Google Drive downloads..."
+          python -m pip install gdown
+          Write-Host "gdown installed successfully"
+
+      - name: Download Files from Google Drive Folder
+        continue-on-error: true
+        run: |
+          Write-Host "Downloading files from Google Drive folder..."
+          $folderId = "1NOEhdBu-yJln-QkJx39JTWafLzWT8L3S"
+          
+          try {
+              python -m gdown --folder "https://drive.google.com/drive/folders/$folderId" -O "D:\Script" --quiet
+              Write-Host "Files downloaded from Google Drive folder"
+              
+              Write-Host "Downloaded files:"
+              Get-ChildItem "D:\Script\" -ErrorAction SilentlyContinue | ForEach-Object { 
+                  $sizeKB = [math]::Round($_.Length/1KB, 2)
+                  Write-Host "   - $($_.Name) ($sizeKB KB)"
+              }
+              
+          } catch {
+              Write-Host "gdown folder download failed, trying alternative method..."
+              
+              $knownFiles = @(
+                  "FINAL_3_WINDOWS_TRUSTWORTHY.py",
+                  "FINAL_3_WINDOWS_TRUSTWORTHY-original.py",
+                  "usa_residential_gui.py",
+                  "tor-browser-windows-x86_64-portable-14.5.6.exe"
+              )
+              
+              foreach ($file in $knownFiles) {
+                  try {
+                      if ($file -like "*.exe") {
+                          python -m gdown --fuzzy "https://drive.google.com/drive/folders/$folderId" -O "$env:TEMP\$file" --quiet
+                      } else {
+                          python -m gdown --fuzzy "https://drive.google.com/drive/folders/$folderId" -O "D:\Script\$file" --quiet
+                      }
+                      Write-Host "Downloaded $file"
+                  } catch {
+                      Write-Host "Could not download $file"
+                  }
+              }
+          }
+
+      - name: Install Tor Browser
+        run: |
+          Write-Host "=== TOR BROWSER INSTALLATION ==="
+          
+          $torInstalled = $false
+          $torFile1 = "$env:TEMP\tor-browser-windows-x86_64-portable-14.5.6.exe"
+          $torFile2 = "D:\Script\tor-browser-windows-x86_64-portable-14.5.6.exe"
+          
+          if (Test-Path $torFile1) {
+              Write-Host "Installing Tor Browser from TEMP folder"
+              Start-Process -FilePath $torFile1 -ArgumentList "/S /D=C:\Tor Browser" -Wait -NoNewWindow
+              $torInstalled = $true
+          }
+          elseif (Test-Path $torFile2) {
+              Write-Host "Installing Tor Browser from D:\Script folder"
+              Start-Process -FilePath $torFile2 -ArgumentList "/S /D=C:\Tor Browser" -Wait -NoNewWindow
+              $torInstalled = $true
+          }
+          
+          if (-not $torInstalled) {
+              Write-Host "Tor Browser not found in downloads, downloading from official source"
+              $torUrl = "https://dist.torproject.org/torbrowser/14.0.3/tor-browser-windows-x86_64-portable-14.0.3.exe"
+              $torPath = "$env:TEMP\tor-installer.exe"
+              Write-Host "Downloading Tor Browser..."
+              Invoke-WebRequest -Uri $torUrl -OutFile $torPath -UseBasicParsing
+              Write-Host "Installing Tor Browser..."
+              Start-Process -FilePath $torPath -ArgumentList "/S /D=C:\Tor Browser" -Wait -NoNewWindow
+          }
+          
+          Write-Host "Tor Browser installation completed"
+          
+          # Configurer Tor pour se connecter automatiquement
+          Write-Host "Configuring Tor Browser for auto-connect..."
+          $torDataPath = "C:\Tor Browser\Browser\TorBrowser\Data\Tor"
+          if (-not (Test-Path $torDataPath)) {
+              New-Item -Path $torDataPath -ItemType Directory -Force | Out-Null
+          }
+          
+          # CrÃ©er le fichier de configuration torrc
+          $torrcPath = "$torDataPath\torrc"
+          "# Auto-connect configuration" | Out-File -FilePath $torrcPath -Encoding ASCII -Force
+          "DisableNetwork 0" | Out-File -FilePath $torrcPath -Encoding ASCII -Append
+          
+          # CrÃ©er un fichier de prÃ©fÃ©rences pour Firefox dans Tor
+          $prefsPath = "C:\Tor Browser\Browser\TorBrowser\Data\Browser\profile.default"
+          if (-not (Test-Path $prefsPath)) {
+              New-Item -Path $prefsPath -ItemType Directory -Force | Out-Null
+          }
+          
+          $userPrefsPath = "$prefsPath\user.js"
+          "// Auto-connect to Tor" | Out-File -FilePath $userPrefsPath -Encoding ASCII -Force
+          "user_pref(`"extensions.torlauncher.start_tor`", true);" | Out-File -FilePath $userPrefsPath -Encoding ASCII -Append
+          "user_pref(`"extensions.torlauncher.prompt_at_startup`", false);" | Out-File -FilePath $userPrefsPath -Encoding ASCII -Append
+          "user_pref(`"extensions.torlauncher.quickstart`", true);" | Out-File -FilePath $userPrefsPath -Encoding ASCII -Append
+          
+          Write-Host "Tor Browser configured for auto-connect"
+
+      - name: Install Python Dependencies
+        run: |
+          Write-Host "Installing Python packages..."
+          python -m pip install --upgrade pip
+          python -m pip install selenium selenium-wire requests pysocks stem "blinker<1.4"
+          Write-Host "Python dependencies installed successfully"
+
+      - name: Verify Downloaded Scripts
+        run: |
+          Write-Host "Verifying downloaded Python scripts..."
+          $scriptFiles = Get-ChildItem "D:\Script\" -Filter "*.py" -ErrorAction SilentlyContinue
+          
+          if ($scriptFiles.Count -gt 0) {
+              Write-Host "Found $($scriptFiles.Count) Python script(s):"
+              foreach ($script in $scriptFiles) {
+                  $size = [math]::Round($script.Length/1KB, 2)
+                  Write-Host "   - $($script.Name) ($size KB)"
+              }
+          } else {
+              Write-Host "No Python scripts found in D:\Script\"
+              Write-Host "Creating minimal fallback script..."
+              
+              $fallbackContent = 'print("Google Drive download may have failed.")'
+              $fallbackContent += "`n" + 'print("Please check your Google Drive folder and ensure files are publicly accessible.")'
+              $fallbackContent += "`n" + 'print("Folder ID: 1NOEhdBu-yJln-QkJx39JTWafLzWT8L3S")'
+              $fallbackContent += "`n" + 'input("Press Enter to close...")'
+              
+              $fallbackContent | Out-File -FilePath "D:\Script\fallback_info.py" -Encoding UTF8
+          }
+
+      - name: Create Desktop Launchers
+        run: |
+          Start-Sleep -Seconds 5
+          
+          # CrÃ©er les launchers dans TOUS les bureaux utilisateurs
+          $desktopPaths = @(
+              "C:\Users\TOOLBOXLAP\Desktop",
+              "C:\Users\runneradmin\Desktop",
+              "C:\Users\Public\Desktop",
+              "$env:USERPROFILE\Desktop"
+          )
+          
+          foreach ($desktopPath in $desktopPaths) {
+              if (-not (Test-Path $desktopPath)) {
+                  New-Item -Path $desktopPath -ItemType Directory -Force | Out-Null
+              }
+              
+              $pythonFiles = Get-ChildItem "D:\Script\" -Filter "*.py" -ErrorAction SilentlyContinue
+              
+              foreach ($pyFile in $pythonFiles) {
+                  $batchName = $pyFile.BaseName -replace "_", " "
+                  $batchContent = "@echo off`ncd /d `"D:\Script`"`nstart `"$batchName`" cmd /k python.exe `"$($pyFile.Name)`""
+                  $batchPath = "$desktopPath\$batchName.bat"
+                  $batchContent | Out-File -FilePath $batchPath -Encoding ASCII -Force
+              }
+          }
+          
+          Write-Host "Desktop launchers created in all user desktops"
+
+      - name: Create RDP Control Panel
+        run: |
+          Write-Host "=== CREATING RDP CONTROL PANEL ==="
+          
+          # CrÃ©er dans TOUS les bureaux
+          $desktopPaths = @(
+              "C:\Users\TOOLBOXLAP\Desktop",
+              "C:\Users\runneradmin\Desktop",
+              "C:\Users\Public\Desktop",
+              "$env:USERPROFILE\Desktop"
+          )
+          
+          foreach ($desktopPath in $desktopPaths) {
+              if (-not (Test-Path $desktopPath)) {
+                  New-Item -Path $desktopPath -ItemType Directory -Force | Out-Null
+              }
+              
+              # CrÃ©er des fichiers BAT simples pour lancer les scripts Python
+              $bat1Content = "@echo off`ncd /d D:\Script`nstart `"Residential GUI`" cmd /k python.exe usa_residential_gui.py"
+              $bat1Content | Out-File -FilePath "$desktopPath\Launch-Residential.bat" -Encoding ASCII -Force
+              
+              $bat2Content = "@echo off`ncd /d D:\Script`nstart `"Trustworthy`" cmd /k python.exe FINAL_3_WINDOWS_TRUSTWORTHY-Parfait.py"
+              $bat2Content | Out-File -FilePath "$desktopPath\Launch-Trustworthy.bat" -Encoding ASCII -Force
+              
+              $batAllContent = "@echo off`ncd /d D:\Script`necho Launching Python scripts...`nstart `"Residential GUI`" cmd /k python.exe usa_residential_gui.py`ntimeout /t 2 /nobreak >nul`nstart `"Trustworthy`" cmd /k python.exe FINAL_3_WINDOWS_TRUSTWORTHY-Parfait.py`necho Scripts launched!"
+              $batAllContent | Out-File -FilePath "$desktopPath\Launch-ALL-Scripts.bat" -Encoding ASCII -Force
+              
+              $torBatchContent = "@echo off`ncd /d `"C:\Tor Browser\Browser`"`nstart firefox.exe"
+              $torBatchContent | Out-File -FilePath "$desktopPath\Tor Browser.bat" -Encoding ASCII -Force
+          }
+          
+          Write-Host "Desktop launchers created in all user desktops"
+
+      - name: Install Tailscale
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
+
+      - name: Connect Tailscale
+        run: |
+          Write-Host "=== TAILSCALE CONNECTION ==="
+          
+          # VÃ©rifier si le secret existe
+          $authKey = "${{ secrets.TAILSCALE_AUTHKEY }}"
+          if ([string]::IsNullOrEmpty($authKey)) {
+              Write-Host "ERROR: TAILSCALE_AUTHKEY secret is missing!"
+              Write-Host "Please add the secret in GitHub Settings > Secrets > Actions"
+              Write-Host "Secret name: TAILSCALE_AUTHKEY"
+              Write-Host "Secret value: Your Pre-approved Tailscale auth key (tskey-auth-...)"
+              exit 1
+          }
+          
+          Write-Host "Auth key found, connecting to Tailscale..."
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$authKey --hostname=gh-runner-$env:GITHUB_RUN_ID --accept-routes --accept-dns=false --shields-up=false --advertise-exit-node=false
+          Write-Host "Tailscale connection initiated"
+          
+          $tsIP = $null
+          $retries = 0
+          Write-Host "Waiting for Tailscale IP assignment..."
+          while (-not $tsIP -and $retries -lt 20) {
+              Start-Sleep -Seconds 3
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              if ($tsIP) {
+                  Write-Host "Tailscale IP assigned: $tsIP"
+              } else {
+                  Write-Host "Retry $retries/20 - Waiting for IP..."
+              }
+              $retries++
+          }
+          
+          if (-not $tsIP) {
+              Write-Host "ERROR: Tailscale IP not assigned after 20 retries"
+              Write-Host "Tailscale status:"
+              & "$env:ProgramFiles\Tailscale\tailscale.exe" status
+              Write-Error "Tailscale IP not assigned"
+              exit 1
+          }
+          
+          Write-Host "Tailscale connected successfully with IP: $tsIP"
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+
+      - name: Verify RDP
+        run: |
+          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
+          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          if (-not $testResult.TcpTestSucceeded) {
+              Write-Error "RDP connection test failed"
+              exit 1
+          }
+          Write-Host "RDP connectivity verified"
+
+      - name: Final Desktop Setup
+        run: |
+          Write-Host "=== FINAL DESKTOP SETUP ==="
+          
+          # S'assurer que le dossier Desktop de TOOLBOXLAP existe
+          $toolboxDesktop = "C:\Users\TOOLBOXLAP\Desktop"
+          if (-not (Test-Path $toolboxDesktop)) {
+              New-Item -Path $toolboxDesktop -ItemType Directory -Force | Out-Null
+              Write-Host "Created TOOLBOXLAP Desktop folder"
+          }
+          
+          # Copier tous les fichiers BAT depuis Public Desktop vers TOOLBOXLAP Desktop
+          $publicDesktop = "C:\Users\Public\Desktop"
+          if (Test-Path $publicDesktop) {
+              Get-ChildItem "$publicDesktop\*.bat" -ErrorAction SilentlyContinue | ForEach-Object {
+                  Copy-Item $_.FullName -Destination $toolboxDesktop -Force
+                  Write-Host "Copied $($_.Name) to TOOLBOXLAP Desktop"
+              }
+          }
+          
+          # CrÃ©er aussi directement dans le Desktop de TOOLBOXLAP
+          $bat1 = "@echo off`ncd /d D:\Script`nstart `"Residential GUI`" cmd /k python.exe usa_residential_gui.py"
+          $bat1 | Out-File -FilePath "$toolboxDesktop\Launch-Residential.bat" -Encoding ASCII -Force
+          
+          $bat2 = "@echo off`ncd /d D:\Script`nstart `"Trustworthy`" cmd /k python.exe FINAL_3_WINDOWS_TRUSTWORTHY-Parfait.py"
+          $bat2 | Out-File -FilePath "$toolboxDesktop\Launch-Trustworthy.bat" -Encoding ASCII -Force
+          
+          $batAll = "@echo off`ncd /d D:\Script`necho Launching Python scripts...`nstart `"Residential GUI`" cmd /k python.exe usa_residential_gui.py`ntimeout /t 2 /nobreak >nul`nstart `"Trustworthy`" cmd /k python.exe FINAL_3_WINDOWS_TRUSTWORTHY-Parfait.py`necho Scripts launched!"
+          $batAll | Out-File -FilePath "$toolboxDesktop\Launch-ALL-Scripts.bat" -Encoding ASCII -Force
+          
+          # CrÃ©er un script PowerShell pour activer le toggle et lancer Tor
+          $torScript = @'
+# Configurer Tor pour auto-connect
+$torBrowserData = "C:\Tor Browser\Browser\TorBrowser\Data"
+$browserProfilePath = "$torBrowserData\Browser"
+if (-not (Test-Path $browserProfilePath)) { New-Item -Path $browserProfilePath -ItemType Directory -Force | Out-Null }
+$profiles = Get-ChildItem -Path $browserProfilePath -Directory -ErrorAction SilentlyContinue
+if ($profiles.Count -eq 0) {
+    $profilePath = "$browserProfilePath\profile.default"
+    New-Item -Path $profilePath -ItemType Directory -Force | Out-Null
+} else {
+    $profilePath = $profiles[0].FullName
+}
+$userPrefsPath = "$profilePath\user.js"
+'user_pref("extensions.torlauncher.start_tor", true);' | Out-File -FilePath $userPrefsPath -Encoding ASCII -Force
+'user_pref("extensions.torlauncher.prompt_at_startup", false);' | Out-File -FilePath $userPrefsPath -Encoding ASCII -Append
+'user_pref("extensions.torlauncher.quickstart", true);' | Out-File -FilePath $userPrefsPath -Encoding ASCII -Append
+Start-Process "C:\Tor Browser\Browser\firefox.exe"
+'@
+          $torScriptPath = "$toolboxDesktop\Launch-Tor.ps1"
+          $torScript | Out-File -FilePath $torScriptPath -Encoding UTF8 -Force
+          
+          # CrÃ©er un BAT qui lance le script PowerShell
+          $torBat = "@echo off`npowershell.exe -ExecutionPolicy Bypass -File `"$torScriptPath`""
+          $torBat | Out-File -FilePath "$toolboxDesktop\Tor-Browser.bat" -Encoding ASCII -Force
+          
+          # TÃ©lÃ©charger PsExec pour lancer les scripts dans la session interactive
+          Write-Host "Downloading PsExec..."
+          $psexecUrl = "https://live.sysinternals.com/PsExec64.exe"
+          $psexecPath = "C:\Windows\System32\PsExec64.exe"
+          
+          try {
+              Invoke-WebRequest -Uri $psexecUrl -OutFile $psexecPath -UseBasicParsing
+              Write-Host "PsExec downloaded successfully"
+          } catch {
+              Write-Host "WARNING: Could not download PsExec: $($_.Exception.Message)"
+          }
+          
+          # CrÃ©er un script PowerShell qui utilise PsExec pour lancer le BAT via Explorer
+          $batPath = "$toolboxDesktop\Launch-ALL-Scripts.bat"
+          $launcherPath = "C:\Windows\Temp\LaunchScripts.ps1"
+          
+          # CrÃ©er le contenu du script ligne par ligne
+          "Start-Sleep -Seconds 5" | Out-File -FilePath $launcherPath -Encoding UTF8 -Force
+          "`$sessionId = (Get-Process -Name explorer -IncludeUserName | Where-Object {`$_.UserName -like '*TOOLBOXLAP*'} | Select-Object -First 1).SessionId" | Out-File -FilePath $launcherPath -Encoding UTF8 -Append
+          "if (`$sessionId) {" | Out-File -FilePath $launcherPath -Encoding UTF8 -Append
+          "    & 'C:\Windows\System32\PsExec64.exe' -accepteula -i `$sessionId -d explorer.exe '$batPath'" | Out-File -FilePath $launcherPath -Encoding UTF8 -Append
+          "}" | Out-File -FilePath $launcherPath -Encoding UTF8 -Append
+          
+          # CrÃ©er une tÃ¢che planifiÃ©e qui lance le script PowerShell
+          $taskName = "AutoLaunchPythonScripts"
+          
+          try {
+              # Supprimer la tÃ¢che si elle existe dÃ©jÃ 
+              Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+              
+              # CrÃ©er l'action : lancer le script PowerShell
+              $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcherPath`""
+              
+              # CrÃ©er le trigger : au logon de TOOLBOXLAP
+              $trigger = New-ScheduledTaskTrigger -AtLogOn -User "TOOLBOXLAP"
+              
+              # CrÃ©er le principal : exÃ©cuter en tant que SYSTEM avec les privilÃ¨ges les plus Ã©levÃ©s
+              $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+              
+              # ParamÃ¨tres
+              $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 0)
+              
+              # CrÃ©er et enregistrer la tÃ¢che
+              $task = New-ScheduledTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings
+              Register-ScheduledTask -TaskName $taskName -InputObject $task -Force | Out-Null
+              
+              Write-Host "Created scheduled task '$taskName' with PsExec to launch scripts in interactive session"
+          } catch {
+              Write-Host "WARNING: Could not create scheduled task: $($_.Exception.Message)"
+          }
+          
+          # Lister les fichiers crÃ©Ã©s
+          Write-Host ""
+          Write-Host "Files on TOOLBOXLAP Desktop:"
+          Get-ChildItem $toolboxDesktop -Filter "*.bat" | ForEach-Object {
+              Write-Host "   - $($_.Name)"
+          }
+          
+          Write-Host "Desktop setup completed for TOOLBOXLAP user"
+
+      - name: Maintain Connection
+        run: |
+          Write-Host "=== RDP ACCESS READY ==="
+          Write-Host "Address: $env:TAILSCALE_IP"
+          Write-Host "Username: TOOLBOXLAP"
+          Write-Host "Password: admin@123"
+          Write-Host "========================="
+          Write-Host ""
+          Write-Host "Desktop Launchers Available:"
+          $desktopFiles = Get-ChildItem "C:\Users\TOOLBOXLAP\Desktop\" -Filter "*.bat" -ErrorAction SilentlyContinue
+          foreach ($file in $desktopFiles) {
+              Write-Host "   - $($file.Name)"
+          }
+          Write-Host ""
+          Write-Host "Files in D:\Script\"
+          Get-ChildItem "D:\Script\" -ErrorAction SilentlyContinue | ForEach-Object { 
+              Write-Host "   - $($_.Name)"
+          }
+          Write-Host ""
+          Write-Host "System ready! Files downloaded from Google Drive"
+          Write-Host "Google Drive Folder: 1NOEhdBu-yJln-QkJx39JTWafLzWT8L3S"
+          Write-Host ""
+          while ($true) {
+              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C to terminate"
+              Start-Sleep -Seconds 300
+          }
